@@ -1,16 +1,16 @@
-// background.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "saveCSV") {
-    const rows = message.data
-      .map(([domain, date]) => `${domain},${date}`)
-      .join("\n");
-    const blob = new Blob(["Domain,Date\n" + rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
+    const rows = message.data.map(([url]) => `${url}`).join("\n");
 
-    console.log("Saving file:", message.data);
-    chrome.downloads.download({
-      url: url,
-      filename: "drive_filenames.csv",
-    });
+    const blob = new Blob(["Missing Items\n" + rows], { type: "text/csv" });
+
+    const reader = new FileReader();
+    reader.onloadend = function () {
+      chrome.downloads.download({
+        url: reader.result, // Use FileReader to convert Blob to data URL
+        filename: "missing_items.csv",
+      });
+    };
+    reader.readAsDataURL(blob); // Convert Blob to data URL
   }
 });
