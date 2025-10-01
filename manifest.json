@@ -3,8 +3,11 @@
   "name": "Google Drive File Checker",
   "version": "1.0",
   "description": "Checks filenames and dates in a Google Drive folder and exports data to CSV.",
-  "permissions": ["scripting", "downloads", "activeTab"],
-  "host_permissions": ["https://drive.google.com/*"],
+  "permissions": ["scripting", "downloads", "activeTab", "identity"],
+  "host_permissions": [
+    "https://drive.google.com/*",
+    "https://sheets.googleapis.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -21,5 +24,9 @@
       "resources": ["content.js"],
       "matches": ["https://drive.google.com/*"]
     }
-  ]
+  ],
+  "oauth2": {
+    "client_id": "640570602029-v3jq1qb46j1g0866944ppkael5od1toc.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+  }
 }
