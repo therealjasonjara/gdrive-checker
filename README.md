@@ -43,12 +43,15 @@ google-drive-checker/
 
 ### Step 2: Configure Google Sheet Settings
 
-1. Open `content.js` in a text editor
+1. Open `config.js` in a text editor
 2. Update these configuration values:
 
-```javascript
-const SHEET_ID = "YOUR_SHEET_ID_HERE"; // Extract from your Google Sheet URL
-const RANGE = "'MASTER'!D:D"; // Adjust sheet name and column as needed
+```json
+{
+  "SHEET_ID": "YOUR_SHEET_ID_HERE";, // Extract from your Google Sheet URL,
+  "RANGE": "'MASTER'!D:D"
+}
+
 ```
 
 **How to find your Sheet ID:**
@@ -151,10 +154,12 @@ The CSV file contains **3 columns**:
 
 ### Change the Google Sheet Range
 
-Edit `content.js`:
+Edit `config.js`:
 
-```javascript
-const RANGE = "'SheetName'!D:D"; // Change sheet name or column
+```json
+{
+  "RANGE": "'MASTER'!D:D" // Change sheet name or column
+}
 ```
 
 Examples:
