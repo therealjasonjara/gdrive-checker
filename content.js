@@ -2,8 +2,8 @@
   console.log("Content script started");
 
   // Configuration - Update these values
-  const SHEET_ID = "1jfIMUGJWhAb-9fqMlufYQ3X6dJN4hzMIDIJLnMY-fMQ"; // Extract from your Google Sheet URL
-  const RANGE = "'MASTER'!D:D"; // Changed from C:C to D:D
+  const SHEET_ID = "1jfIMUGJWhAb-9fqMlufYQ3X6dJN4hzMIDIJLnMY-fMQ";
+  const RANGE = "'MASTER'!D:D";
 
   // Fallback domain list (always available)
   const fallbackDomains = [
@@ -38,19 +38,21 @@
 
   // Helper function to normalize domain names
   const normalizeDomain = (domain) => {
-    // Remove 'https://' prefix
     let normalized = domain.replace(/^https?:\/\//, "");
-    // Remove trailing slash
     normalized = normalized.replace(/\/+$/, "");
+    // Convert slashes to underscores for consistent matching
+    // e.g., "www.lyrecodeliverswellness.com/my" becomes "www.lyrecodeliverswellness.com_my"
+    normalized = normalized.replace(/\//g, "_");
+    normalized = normalized.trim();
     return normalized;
   };
 
-  // Function to get auth token from background (simplified)
+  // Function to get auth token from background
   const getAuthToken = async () => {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("Auth token request timeout"));
-      }, 5000); // Shorter timeout
+      }, 5000);
 
       chrome.runtime.sendMessage({ action: "getAuthToken" }, (response) => {
         clearTimeout(timeout);
@@ -69,18 +71,15 @@
     });
   };
 
-  // Function to fetch from Google Sheets directly in content script
+  // Function to fetch from Google Sheets
   const fetchFromGoogleSheets = async () => {
     try {
       console.log("Attempting to get auth token...");
       const token = await getAuthToken();
       console.log("Got auth token, fetching from Google Sheets...");
 
-      // URL encode the range to handle special characters
       const encodedRange = encodeURIComponent(RANGE);
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodedRange}`;
-
-      console.log("Making request to:", url);
 
       const response = await fetch(url, {
         method: "GET",
@@ -90,22 +89,17 @@
         },
       });
 
-      console.log("Response status:", response.status, response.statusText);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Sheets API error response:", errorText);
         throw new Error(`Sheets API HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
-      console.log("Sheets API response:", data);
 
       const domains = data.values
         ? data.values.flat().filter((domain) => {
             if (!domain || domain.trim() === "") return false;
 
-            // Check if it looks like a URL/domain (contains a dot and doesn't look like a header)
             const trimmed = domain.trim();
             const hasProtocol =
               trimmed.startsWith("http://") || trimmed.startsWith("https://");
@@ -115,22 +109,19 @@
               !trimmed.toLowerCase().includes("url") &&
               !trimmed.toLowerCase().includes("website");
 
-            // Must have a dot (domain indicator) and not be a header
             return (hasDot || hasProtocol) && isNotHeader;
           })
         : [];
 
-      // Normalize each domain from the sheet
       const normalizedDomains = domains.map(normalizeDomain);
 
       console.log(
-        `Successfully fetched ${normalizedDomains.length} normalized domains from Google Sheets (filtered blanks and non-URLs)`
+        `✅ Successfully fetched ${normalizedDomains.length} domains from Google Sheets`
       );
-      console.log("Domains from sheet:", normalizedDomains);
       return normalizedDomains;
     } catch (error) {
       console.error("Error fetching from Google Sheets:", error);
-      throw error; // Re-throw to handle in the main flow
+      throw error;
     }
   };
 
@@ -140,9 +131,6 @@
 
   try {
     predefinedList = await fetchFromGoogleSheets();
-    console.log(
-      `Using Google Sheets domain list with ${predefinedList.length} domains`
-    );
   } catch (error) {
     console.error("Failed to fetch domains from Google Sheets:", error);
     predefinedList = fallbackDomains.map(normalizeDomain);
@@ -152,290 +140,266 @@
     );
   }
 
-  // Main logic - scan Google Drive files
-  const domainsOnDrive = new Set();
-  const today = new Date();
-  const previousMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  console.log("\n=== DOMAINS FROM SHEET ===");
+  console.log(`Total domains in sheet: ${predefinedList.length}`);
+  console.log("==========================\n");
 
-  console.log("=== STARTING DRIVE SCAN ===");
-  console.log("Looking for files from:", previousMonth.toDateString());
-  console.log("Today's date:", today.toDateString());
+  // Main logic - scan ALL strong tags on Google Drive (no scrolling - manual scroll by user)
+  console.log("=== SCANNING GOOGLE DRIVE ===");
+  console.log(
+    "NOTE: Scroll manually through your Drive folder to load all files, then run this extension."
+  );
+  console.log("Looking for all <strong> tags with backup files...\n");
 
-  // First, let's see what elements we can find
-  console.log("=== DEBUGGING GRID STRUCTURE ===");
-  const gridCells = document.querySelectorAll('div[role="gridcell"]');
-  console.log(`Total grid cells found: ${gridCells.length}`);
+  const domainsOnDrive = new Map(); // Store domain -> date mapping
+  const allStrongTags = document.querySelectorAll("strong");
 
-  if (gridCells.length === 0) {
-    console.error("❌ NO GRID CELLS FOUND!");
-    console.log("Trying alternative selectors...");
+  console.log(`Found ${allStrongTags.length} total <strong> tags`);
 
-    // Try to find the grid container
-    const gridContainer = document.querySelector('div[role="grid"]');
-    console.log("Grid container found:", gridContainer);
+  let backupFilesFound = 0;
+  let foldersSkipped = 0;
 
-    // Try to find any data rows
-    const rows = document.querySelectorAll('div[role="row"]');
-    console.log(`Rows found: ${rows.length}`);
+  allStrongTags.forEach((strongTag) => {
+    const text = strongTag.innerText || strongTag.textContent || "";
+    const trimmedText = text.trim();
 
-    // Log the first few rows to see structure
-    if (rows.length > 0) {
-      console.log("First row HTML:", rows[0].outerHTML.substring(0, 500));
+    // Skip if it doesn't contain _wpvivid (likely a folder)
+    if (!trimmedText.includes("_wpvivid")) {
+      foldersSkipped++;
+      return;
     }
-  } else {
-    // Log first few grid cells to see their structure
-    console.log("=== FIRST 3 GRID CELLS STRUCTURE ===");
-    for (let i = 0; i < Math.min(3, gridCells.length); i++) {
-      const cell = gridCells[i];
-      console.log(`\nGrid Cell ${i}:`);
-      console.log("- HTML:", cell.outerHTML.substring(0, 300));
 
-      const filenameEl = cell.querySelector(
-        'div[data-column-field="6"] strong'
-      );
-      const dateEl = cell.querySelector('div[data-column-field="5"] span');
+    // Extract domain from backup filename
+    const domain = trimmedText.split("_wpvivid")[0].trim();
 
-      console.log("- Filename element found:", !!filenameEl);
-      if (filenameEl) {
-        console.log("  - Filename text:", filenameEl.innerText);
+    if (domain && domain.length > 0) {
+      const normalizedDomain = normalizeDomain(domain);
+
+      // Find the corresponding date
+      let dateText = "N/A";
+      let currentElement = strongTag;
+
+      for (let i = 0; i < 10; i++) {
+        if (!currentElement.parentElement) break;
+        currentElement = currentElement.parentElement;
+
+        const dateSpan = currentElement.querySelector(
+          'div[data-column-field="5"] span'
+        );
+        if (dateSpan) {
+          dateText = (dateSpan.innerText || dateSpan.textContent || "")
+            .replace("me", "")
+            .trim();
+          break;
+        }
       }
 
-      console.log("- Date element found:", !!dateEl);
-      if (dateEl) {
-        console.log("  - Date text:", dateEl.innerText);
+      // Store or update with latest date
+      if (!domainsOnDrive.has(normalizedDomain)) {
+        console.log(
+          `✅ Backup file #${
+            backupFilesFound + 1
+          }: ${normalizedDomain} (${dateText})`
+        );
+        domainsOnDrive.set(normalizedDomain, dateText);
+        backupFilesFound++;
       }
+    }
+  });
 
-      // Try to find ALL elements with data-column-field
-      const allColumnFields = cell.querySelectorAll("[data-column-field]");
-      console.log(
-        `- Total data-column-field elements: ${allColumnFields.length}`
-      );
-      allColumnFields.forEach((el) => {
-        const fieldNum = el.getAttribute("data-column-field");
-        const text = el.innerText || el.textContent;
-        console.log(`  - Field ${fieldNum}: "${text.substring(0, 50)}"`);
+  console.log(`\n=== SCAN SUMMARY ===`);
+  console.log(`Total <strong> tags checked: ${allStrongTags.length}`);
+  console.log(`Folders/non-backups skipped: ${foldersSkipped}`);
+  console.log(`Unique domains on drive: ${domainsOnDrive.size}`);
+  console.log("====================\n");
+
+  // Categorize domains
+  const latestBackups = []; // In sheet AND in drive
+  const missingItems = []; // In sheet but NOT in drive
+  const inactiveBackups = []; // In drive but NOT in sheet
+
+  const sheetSet = new Set(predefinedList);
+  const driveSet = new Set(domainsOnDrive.keys());
+
+  // Latest Backups: In both sheet and drive
+  predefinedList.forEach((domain) => {
+    if (domainsOnDrive.has(domain)) {
+      latestBackups.push({
+        domain: domain,
+        date: domainsOnDrive.get(domain),
       });
     }
-  }
-  console.log("====================================");
+  });
 
-  let hasMoreItems = true;
-  let processedCount = 0;
-  let totalCellsScanned = 0;
-  const maxFiles = 1000; // Safety limit
+  // Missing Items: In sheet but not in drive
+  predefinedList.forEach((domain) => {
+    if (!domainsOnDrive.has(domain)) {
+      missingItems.push(domain);
+    }
+  });
 
-  while (hasMoreItems && processedCount < maxFiles) {
-    const gridCells = document.querySelectorAll('div[role="gridcell"]');
-    console.log(
-      `\n=== Scan iteration ${Math.floor(totalCellsScanned / 100) + 1} ===`
-    );
-    console.log(`Processing batch: found ${gridCells.length} grid cells`);
-    totalCellsScanned += gridCells.length;
+  // Inactive Backups: In drive but not in sheet
+  domainsOnDrive.forEach((date, domain) => {
+    if (!sheetSet.has(domain)) {
+      inactiveBackups.push({
+        domain: domain,
+        date: date,
+      });
+    }
+  });
 
-    let foundNewFiles = false;
-    let oldFileCount = 0;
-    let skippedCount = 0;
+  // Sort all arrays
+  latestBackups.sort((a, b) => a.domain.localeCompare(b.domain));
+  missingItems.sort();
+  inactiveBackups.sort((a, b) => a.domain.localeCompare(b.domain));
 
-    gridCells.forEach((cell, index) => {
-      const filenameElement = cell.querySelector('div[data-column-field="6"]');
-      const dateElement = cell.querySelector('div[data-column-field="5"]');
+  // Console output
+  console.log("=== CATEGORIZATION RESULTS ===");
+  console.log(`📊 Domains in sheet: ${predefinedList.length}`);
+  console.log(`📊 Domains on drive: ${domainsOnDrive.size}`);
+  console.log("");
+  console.log(
+    `✅ Latest Backups (in sheet AND in drive): ${latestBackups.length}`
+  );
+  console.log(
+    `❌ Missing Items (in sheet but NOT in drive): ${missingItems.length}`
+  );
+  console.log(
+    `⚠️  Inactive Backups (in drive but NOT in sheet): ${inactiveBackups.length}`
+  );
+  console.log("==============================\n");
 
-      if (!filenameElement || !dateElement) {
-        skippedCount++;
-        return;
-      }
-
-      const filenameText = filenameElement.innerText.trim();
-      const dateText = dateElement.innerText.replace("me", "").trim();
-
-      // Skip if we've already processed this file
-      if (!filenameText || !dateText) {
-        skippedCount++;
-        return;
-      }
-
-      // Skip folders (folders typically don't have the _wpvivid pattern)
-      if (!filenameText.includes("_wpvivid")) {
-        console.log(`Skipping (likely folder): "${filenameText}"`);
-        skippedCount++;
-        return;
-      }
-
-      // Extract domain by splitting at "_wpvivid" and taking the first part
-      // Example: "webscelerate.com_wpvivid-10f2fe6e88341_2025-10-01-09-22_backup_all"
-      // becomes: "webscelerate.com"
-      const domain = filenameText.split("_wpvivid")[0].trim();
-
-      if (!domain) {
-        console.log("Could not extract domain from:", filenameText);
-        skippedCount++;
-        return;
-      }
-
-      const fileDate = new Date(dateText);
-
-      console.log(`Checking file: "${filenameText}"`);
-      console.log(`  - Extracted domain: "${domain}"`);
-      console.log(`  - Date: ${dateText} (parsed: ${fileDate.toDateString()})`);
-      console.log(`  - Date valid: ${!isNaN(fileDate.getTime())}`);
-      console.log(
-        `  - After cutoff (${previousMonth.toDateString()}): ${
-          fileDate >= previousMonth
-        }`
-      );
-
-      if (!isNaN(fileDate.getTime()) && fileDate >= previousMonth) {
-        // Normalize the domain from the filename before checking against the list
-        const normalizedDomain = normalizeDomain(domain);
-        if (!domainsOnDrive.has(normalizedDomain)) {
-          console.log("✅ NEW VALID FILE FOUND:", {
-            originalFilename: filenameText,
-            extractedDomain: domain,
-            normalizedDomain: normalizedDomain,
-            date: dateText,
-          });
-          domainsOnDrive.add(normalizedDomain);
-          foundNewFiles = true;
-        } else {
-          console.log("  (Already recorded)");
-        }
-        processedCount++;
-      } else {
-        console.log("  ❌ Rejected: Too old or invalid date");
-        oldFileCount++;
-      }
+  if (latestBackups.length > 0) {
+    console.log("=== LATEST BACKUPS ===");
+    latestBackups.forEach((item, index) => {
+      console.log(`${index + 1}. ✅ ${item.domain} - ${item.date}`);
     });
+    console.log("");
+  }
 
-    console.log(
-      `Batch summary: ${
-        foundNewFiles ? "Found new files" : "No new files"
-      }, ${skippedCount} skipped, ${oldFileCount} old files`
-    );
-    console.log(`Total unique domains so far: ${domainsOnDrive.size}`);
+  if (missingItems.length > 0) {
+    console.log("=== MISSING ITEMS ===");
+    missingItems.forEach((domain, index) => {
+      console.log(`${index + 1}. ❌ ${domain}`);
+    });
+    console.log("");
+  }
 
-    // If we found mostly old files, we can stop
-    if (oldFileCount > foundNewFiles * 3 && oldFileCount > 10) {
-      console.log("Found mostly old files, stopping scroll");
-      hasMoreItems = false;
-    } else if (foundNewFiles || processedCount < 50) {
-      // Scroll to load more content
-      console.log("Scrolling to load more content...");
-      const grid = document.querySelector(".PEfnhb");
-      if (grid) {
-        const scrollBefore = grid.scrollTop;
-        console.log(`Scroll position before: ${scrollBefore}`);
-        grid.scrollBy(0, 800);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        console.log(`Scroll position after: ${grid.scrollTop}`);
+  if (inactiveBackups.length > 0) {
+    console.log("=== INACTIVE BACKUPS ===");
+    inactiveBackups.forEach((item, index) => {
+      console.log(`${index + 1}. ⚠️  ${item.domain} - ${item.date}`);
+    });
+    console.log("");
+  }
 
-        // Check if we actually scrolled
-        if (grid.scrollTop === scrollBefore) {
-          console.log("No more content to scroll, stopping");
-          hasMoreItems = false;
-        }
-      } else {
-        console.log("❌ Grid element '.PEfnhb' not found!");
-        console.log("Trying alternative scroll methods...");
+  // Create comprehensive CSV with 3 columns
+  console.log("=== CREATING CSV ===");
 
-        // Try c-wiz[1]
-        const allCWiz = document.querySelectorAll("c-wiz");
-        if (allCWiz.length > 1) {
-          console.log(
-            `Found ${allCWiz.length} c-wiz elements, trying c-wiz[1]`
+  // Find the maximum length to know how many rows we need
+  const maxLength = Math.max(
+    latestBackups.length,
+    missingItems.length,
+    inactiveBackups.length
+  );
+  console.log(`Max rows needed: ${maxLength}`);
+
+  const csvData = [];
+
+  // Add header row
+  csvData.push(["Latest Backups", "Missing Items", "Inactive Backups"]);
+
+  // Add data rows
+  for (let i = 0; i < maxLength; i++) {
+    const row = [
+      latestBackups[i]?.domain || "",
+      missingItems[i] || "",
+      inactiveBackups[i]?.domain || "",
+    ];
+    csvData.push(row);
+  }
+
+  console.log(`📊 Prepared ${csvData.length} rows (including header)`);
+  console.log("=== CSV PREVIEW ===");
+  console.log("Row 0 (Header):", csvData[0]);
+  console.log("Row 1 (Data):", csvData[1]);
+  console.log("Row 2 (Data):", csvData[2]);
+  console.log("===================\n");
+
+  // Send to background script for download
+  console.log("📤 Sending CSV data to background script...");
+
+  try {
+    chrome.runtime.sendMessage(
+      {
+        action: "saveComprehensiveCSV",
+        data: csvData,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "❌ Failed to send message:",
+            chrome.runtime.lastError.message
           );
-          const scrollBefore = allCWiz[1].scrollTop;
-          allCWiz[1].scrollBy(0, 800);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          if (allCWiz[1].scrollTop === scrollBefore) {
-            console.log("c-wiz[1] scroll failed, stopping");
-            hasMoreItems = false;
-          }
+
+          // Fallback: try direct download
+          console.log("Trying fallback download method...");
+          const csvRows = csvData.map((row) => {
+            return row
+              .map((cell) => {
+                const cellStr = String(cell);
+                if (
+                  cellStr.includes(",") ||
+                  cellStr.includes('"') ||
+                  cellStr.includes("\n")
+                ) {
+                  return `"${cellStr.replace(/"/g, '""')}"`;
+                }
+                return cellStr;
+              })
+              .join(",");
+          });
+          const csvContent = csvRows.join("\n");
+
+          const dataUrl =
+            "data:text/csv;charset=utf-8," + encodeURIComponent(csvContent);
+          const link = document.createElement("a");
+          link.href = dataUrl;
+          link.download = `backup_report_${
+            new Date().toISOString().split("T")[0]
+          }.csv`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          let alertMessage = `📊 Backup Report Generated!\n\n`;
+          alertMessage += `✅ Latest Backups: ${latestBackups.length}\n`;
+          alertMessage += `❌ Missing Items: ${missingItems.length}\n`;
+          alertMessage += `⚠️  Inactive Backups: ${inactiveBackups.length}\n\n`;
+          alertMessage += `CSV file downloaded via fallback method.`;
+
+          alert(alertMessage);
+        } else if (response?.success) {
+          console.log("✅ CSV download initiated successfully");
+
+          let alertMessage = `📊 Backup Report Generated!\n\n`;
+          alertMessage += `✅ Latest Backups: ${latestBackups.length}\n`;
+          alertMessage += `❌ Missing Items: ${missingItems.length}\n`;
+          alertMessage += `⚠️  Inactive Backups: ${inactiveBackups.length}\n\n`;
+          alertMessage += `CSV file downloaded successfully!`;
+
+          alert(alertMessage);
         } else {
-          console.log("Not enough c-wiz elements found, stopping");
-          hasMoreItems = false;
+          console.error(
+            "❌ Background script returned error:",
+            response?.error
+          );
         }
       }
-    } else {
-      console.log("No new files found and enough processed, stopping");
-      hasMoreItems = false;
-    }
+    );
+  } catch (error) {
+    console.error("❌ Error creating CSV:", error);
   }
 
-  console.log(`Scan complete: processed ${processedCount} files`);
-  console.log("=== COMPARISON DEBUG ===");
-  console.log("Total unique domains found on drive:", domainsOnDrive.size);
-  console.log("Domains found on drive:", Array.from(domainsOnDrive).sort());
-  console.log("Predefined list from sheet:", predefinedList.sort());
-  console.log("========================");
-
-  // CRITICAL FIX: Only compare if we successfully got domains from Google Sheets
-  // If we used the fallback and found NO files on drive, don't generate CSV
-  let missingItems = [];
-
-  if (usedFallback && domainsOnDrive.size === 0) {
-    console.log(
-      "Used fallback list but found NO files on drive - not generating CSV"
-    );
-    alert(
-      "No files found on Google Drive. Please check:\n1. You're in the correct folder\n2. Files are from the previous month\n3. Try running the scan again"
-    );
-  } else if (predefinedList.length === 0) {
-    console.log("No domains found in Google Sheet - nothing to compare");
-    alert(
-      "⚠️ No domains found in Google Sheet. Please check:\n1. Sheet ID is correct\n2. Range is correct (D:D)\n3. Sheet has data in column D"
-    );
-  } else {
-    // Normal comparison: find what's in the list but not on drive
-    console.log("=== CHECKING EACH DOMAIN ===");
-    missingItems = predefinedList.filter((sheetDomain) => {
-      const isMissing = !domainsOnDrive.has(sheetDomain);
-      if (isMissing) {
-        console.log(
-          `❌ MISSING: "${sheetDomain}" (not found in drive backups)`
-        );
-      } else {
-        console.log(`✓ FOUND: "${sheetDomain}" (has backup on drive)`);
-      }
-      return isMissing;
-    });
-    console.log("============================");
-
-    console.log(`Comparison complete:`);
-    console.log(`- Domains in sheet (column D): ${predefinedList.length}`);
-    console.log(`- Domains found on drive: ${domainsOnDrive.size}`);
-    console.log(`- Missing domains: ${missingItems.length}`);
-    console.log(`Missing domains list:`, missingItems);
-
-    if (missingItems.length === 0) {
-      console.log("All domains have backups!");
-      alert("✅ All domains have backups!");
-    } else {
-      // Send results to background for CSV download
-      try {
-        chrome.runtime.sendMessage(
-          {
-            action: "saveCSV",
-            data: missingItems.map((url) => [url]),
-          },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              console.error(
-                "Failed to trigger CSV download:",
-                chrome.runtime.lastError.message
-              );
-            } else {
-              console.log("CSV download initiated");
-              alert(
-                `Found ${missingItems.length} missing backups. CSV downloaded.`
-              );
-            }
-          }
-        );
-      } catch (error) {
-        console.error("Error sending CSV request:", error);
-      }
-    }
-  }
-
-  console.log("Content script completed successfully");
+  console.log("\n✅ Content script completed");
 })();

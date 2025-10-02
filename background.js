@@ -34,7 +34,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 
-  // Handle CSV download
+  // Handle comprehensive CSV download (new format with categories)
+  if (message.action === "saveComprehensiveCSV") {
+    console.log(`Creating comprehensive CSV with ${message.data.length} rows`);
+
+    try {
+      // Convert array data to CSV format
+      const csvRows = message.data.map((row) => {
+        // Escape any commas or quotes in the data
+        return row
+          .map((cell) => {
+            const cellStr = String(cell);
+            if (
+              cellStr.includes(",") ||
+              cellStr.includes('"') ||
+              cellStr.includes("\n")
+            ) {
+              return `"${cellStr.replace(/"/g, '""')}"`;
+            }
+            return cellStr;
+          })
+          .join(",");
+      });
+
+      const csvContent = csvRows.join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv" });
+
+      const reader = new FileReader();
+      reader.onloadend = function () {
+        const dataUrl = reader.result;
+        const timestamp = new Date().toISOString().split("T")[0];
+
+        chrome.downloads.download(
+          {
+            url: dataUrl,
+            filename: `backup_report_${timestamp}.csv`,
+          },
+          (downloadId) => {
+            if (chrome.runtime.lastError) {
+              console.error(
+                "Download failed:",
+                chrome.runtime.lastError.message
+              );
+            } else {
+              console.log(`Download started with ID: ${downloadId}`);
+            }
+          }
+        );
+      };
+
+      reader.onerror = function () {
+        console.error("FileReader error");
+      };
+
+      reader.readAsDataURL(blob);
+
+      // Send immediate response
+      sendResponse({ success: true });
+    } catch (error) {
+      console.error("Error creating CSV:", error);
+      sendResponse({ success: false, error: error.message });
+    }
+
+    return false; // Synchronous response
+  }
+
+  // Handle old CSV download format (for backwards compatibility)
   if (message.action === "saveCSV") {
     console.log(`Creating CSV with ${message.data.length} missing items`);
 
