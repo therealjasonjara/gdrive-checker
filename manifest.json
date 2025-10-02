@@ -21,7 +21,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["content.js"],
+      "resources": ["content.js", "config.json"],
       "matches": ["https://drive.google.com/*"]
     }
   ],
