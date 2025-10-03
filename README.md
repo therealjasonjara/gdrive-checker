@@ -34,6 +34,7 @@ Ensure you have these files in a folder:
 ```
 google-drive-checker/
 ├── manifest.json
+├──.gitignore
 ├── background.js
 ├── content.js
 ├── popup.html
@@ -41,10 +42,10 @@ google-drive-checker/
 └── icon.png (optional)
 ```
 
-### Step 2: Configure Google Sheet Settings
+### Step 2: Configure `config.json` and your `.env` Settings
 
-1. Open `config.js` in a text editor
-2. Update these configuration values:
+1. Create a `config.json` and `.env` files in your current directory
+2. Add these configuration inside `config.json`:
 
 ```json
 {
@@ -52,6 +53,12 @@ google-drive-checker/
   "RANGE": "'MASTER'!D:D"
 }
 
+```
+
+3. On your `.env`, add this:
+
+```javascript
+GOOGLE_CLIENT_ID = YOUR_GOOGLE_CLIENT_ID;
 ```
 
 **How to find your Sheet ID:**
